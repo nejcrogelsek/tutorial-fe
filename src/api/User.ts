@@ -22,3 +22,6 @@ export const uploadAvatar = async (formData: FormData, id: string) =>
     `${apiRoutes.UPLOAD_AVATAR_IMAGE}/${id}`,
     formData,
   )
+
+export const refreshTokens = async () =>
+  apiRequest<undefined, UserType>('get', apiRoutes.REFRESH_TOKENS)
