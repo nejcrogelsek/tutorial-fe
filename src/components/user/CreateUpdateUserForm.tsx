@@ -1,7 +1,8 @@
 import {
-  RegisterUserFields,
-  useRegisterForm,
-} from 'hooks/react-hook-form/useRegister'
+  CreateUserFields,
+  UpdateUserFields,
+  useCreateUpdateUserForm,
+} from 'hooks/react-hook-form/useCreateUpdateUser'
 import { ChangeEvent, FC, useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import ToastContainer from 'react-bootstrap/ToastContainer'
@@ -16,10 +17,20 @@ import { StatusCode } from 'constants/errorConstants'
 import authStore from 'stores/auth.store'
 import Avatar from 'react-avatar'
 import { observer } from 'mobx-react'
+import { UserType } from 'models/auth'
+import { useQuery } from 'react-query'
+import { RoleType } from 'models/role'
 
-const RegisterForm: FC = () => {
+interface Props {
+  defaultValues?: UserType & { isActiveUser?: boolean }
+}
+
+const CreateUpdateUserForm: FC<Props> = ({ defaultValues }) => {
   const navigate = useNavigate()
-  const { handleSubmit, errors, control } = useRegisterForm()
+  const { handleSubmit, errors, control } = useCreateUpdateUserForm({
+    defaultValues,
+  })
+  const { data: rolesData } = useQuery(['roles'], API.fetchRoles)
   const [apiError, setApiError] = useState('')
   const [showError, setShowError] = useState(false)
 
@@ -27,9 +38,16 @@ const RegisterForm: FC = () => {
   const [preview, setPreview] = useState<string | null>(null)
   const [fileError, setFileError] = useState(false)
 
-  const onSubmit = handleSubmit(async (data: RegisterUserFields) => {
+  const onSubmit = handleSubmit(
+    async (data: CreateUserFields | UpdateUserFields) => {
+      if (!defaultValues) await handleAdd(data as CreateUserFields)
+      else await handleUpdate(data as UpdateUserFields)
+    },
+  )
+
+  const handleAdd = async (data: CreateUserFields) => {
     if (!file) return
-    const response = await API.register(data)
+    const response = await API.createUser(data)
     if (response.data?.statusCode === StatusCode.BAD_REQUEST) {
       setApiError(response.data.message)
       setShowError(true)
@@ -37,51 +55,69 @@ const RegisterForm: FC = () => {
       setApiError(response.data.message)
       setShowError(true)
     } else {
-      // Login user before uploading an avatar image
-      const loginResponse = await API.login({
-        email: data.email,
-        password: data.password,
-      })
-      if (loginResponse.data?.statusCode === StatusCode.BAD_REQUEST) {
-        setApiError(loginResponse.data.message)
+      // Upload avatar
+      const formData = new FormData()
+      formData.append('avatar', file, file.name)
+      const fileResponse = await API.uploadAvatar(formData, response.data.id)
+      if (fileResponse.data?.statusCode === StatusCode.BAD_REQUEST) {
+        setApiError(fileResponse.data.message)
         setShowError(true)
       } else if (
-        loginResponse.data?.statusCode === StatusCode.INTERNAL_SERVER_ERROR
+        fileResponse.data?.statusCode === StatusCode.INTERNAL_SERVER_ERROR
       ) {
-        setApiError(loginResponse.data.message)
+        setApiError(fileResponse.data.message)
         setShowError(true)
       } else {
-        // Upload avatar
-        const formData = new FormData()
-        formData.append('avatar', file, file.name)
-        const fileResponse = await API.uploadAvatar(
-          formData,
-          loginResponse.data.id,
-        )
-        if (fileResponse.data?.statusCode === StatusCode.BAD_REQUEST) {
-          setApiError(fileResponse.data.message)
-          setShowError(true)
-        } else if (
-          fileResponse.data?.statusCode === StatusCode.INTERNAL_SERVER_ERROR
-        ) {
-          setApiError(fileResponse.data.message)
-          setShowError(true)
-        } else {
+        navigate(`${routes.DASHBOARD_PREFIX}/users`)
+      }
+    }
+  }
+
+  const handleUpdate = async (data: UpdateUserFields) => {
+    const response = await API.updateUser(data, defaultValues?.id as string)
+    if (response.data?.statusCode === StatusCode.BAD_REQUEST) {
+      setApiError(response.data.message)
+      setShowError(true)
+    } else if (response.data?.statusCode === StatusCode.INTERNAL_SERVER_ERROR) {
+      setApiError(response.data.message)
+      setShowError(true)
+    } else {
+      if (!file) {
+        if (defaultValues?.isActiveUser) {
+          authStore.login(response.data)
+        }
+        navigate(`${routes.DASHBOARD_PREFIX}/users`)
+        return
+      }
+      // Upload avatar
+      const formData = new FormData()
+      formData.append('avatar', file, file.name)
+      const fileResponse = await API.uploadAvatar(formData, response.data.id)
+      if (fileResponse.data?.statusCode === StatusCode.BAD_REQUEST) {
+        setApiError(fileResponse.data.message)
+        setShowError(true)
+      } else if (
+        fileResponse.data?.statusCode === StatusCode.INTERNAL_SERVER_ERROR
+      ) {
+        setApiError(fileResponse.data.message)
+        setShowError(true)
+      } else {
+        if (defaultValues?.isActiveUser) {
           // Get user with avatar image
           const userResponse = await API.fetchUser()
           if (
             userResponse.data?.statusCode === StatusCode.INTERNAL_SERVER_ERROR
           ) {
-            setApiError(fileResponse.data.message)
+            setApiError(userResponse.data.message)
             setShowError(true)
           } else {
             authStore.login(userResponse.data)
-            navigate(routes.HOME)
           }
         }
+        navigate(`${routes.DASHBOARD_PREFIX}/users`)
       }
     }
-  })
+  }
 
   const handleFileError = () => {
     if (!file) setFileError(true)
@@ -110,10 +146,19 @@ const RegisterForm: FC = () => {
 
   return (
     <>
-      <Form className="register-form" onSubmit={onSubmit}>
+      <Form className="user-form" onSubmit={onSubmit}>
         <Form.Group className="d-flex flex-column justify-content-center align-items-center">
           <FormLabel htmlFor="avatar" id="avatar-p">
-            <Avatar round src={preview as string} alt="Avatar" />
+            <Avatar
+              round
+              src={
+                preview
+                  ? preview
+                  : defaultValues &&
+                    `${process.env.REACT_APP_API_URL}/files/${defaultValues?.avatar}`
+              }
+              alt="Avatar"
+            />
           </FormLabel>
           <input
             onChange={handleFileChange}
@@ -202,6 +247,35 @@ const RegisterForm: FC = () => {
         />
         <Controller
           control={control}
+          name="role_id"
+          render={({ field }) => (
+            <Form.Group className="mb-3">
+              <FormLabel htmlFor="role_id">Role</FormLabel>
+              <Form.Select
+                className={
+                  errors.role_id ? 'form-control is-invalid' : 'form-control'
+                }
+                {...field}
+                aria-label="Role"
+                aria-describedby="role_id"
+              >
+                <option></option>
+                {rolesData?.data.map((role: RoleType, index: number) => (
+                  <option key={index} value={role.id}>
+                    {role.name}
+                  </option>
+                ))}
+              </Form.Select>
+              {errors.role_id && (
+                <div className="invalid-feedback text-danger">
+                  {errors.role_id.message}
+                </div>
+              )}
+            </Form.Group>
+          )}
+        />
+        <Controller
+          control={control}
           name="password"
           render={({ field }) => (
             <Form.Group className="mb-3">
@@ -249,14 +323,12 @@ const RegisterForm: FC = () => {
             </Form.Group>
           )}
         />
-        <div className="d-flex justify-content-between align-items-center mb-2">
-          <p className="mb-0">Already have an account?</p>
-          <Link className="text-decoration-none text-end" to={routes.LOGIN}>
-            Login
-          </Link>
-        </div>
-        <Button className="w-100" type="submit" onMouseUp={handleFileError}>
-          Create account
+        <Button
+          className="w-100"
+          type="submit"
+          onMouseUp={defaultValues ? undefined : handleFileError}
+        >
+          {defaultValues ? 'Update user' : 'Create new user'}
         </Button>
       </Form>
       {showError && (
@@ -273,4 +345,4 @@ const RegisterForm: FC = () => {
   )
 }
 
-export default observer(RegisterForm)
+export default observer(CreateUpdateUserForm)
