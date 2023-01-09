@@ -15,10 +15,11 @@ import * as API from 'api/Api'
 import { StatusCode } from 'constants/errorConstants'
 import authStore from 'stores/auth.store'
 import Avatar from 'react-avatar'
+import { resetGlobalState } from 'mobx/dist/internal'
 
 const RegisterForm: FC = () => {
   const navigate = useNavigate()
-  const { handleSubmit, errors, control, reset } = useRegisterForm()
+  const { handleSubmit, errors, control } = useRegisterForm()
   const [apiError, setApiError] = useState('')
   const [showError, setShowError] = useState(false)
 
